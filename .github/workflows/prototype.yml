@@ -17,6 +17,11 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+      - name: Observe queue with production candidate scripts
+        if: ${{ github.event_name == 'merge_group' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/observe-queue-batch.mjs
       - name: Verify combined candidate
         env:
           GH_TOKEN: ${{ github.token }}

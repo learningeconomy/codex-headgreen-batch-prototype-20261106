@@ -28,4 +28,5 @@ data=$(gh api graphql -f query="$query" -F owner="$owner" -F repo="$repo")
 last=$(jq -r '.data.repository.mergeQueue.entries.nodes | last | .pullRequest.number // empty' <<< "$data")
 [[ "$current" == "$last" ]] || { echo 'Batch tail changed before validation; fail closed.'; exit 1; }
 echo "BATCH_E2E_EXECUTED PR=$current TESTED_SHA=$(git rev-parse HEAD)"
+echo 'TEST_HOLD_FOR_PREFIX_CANCELLATION'; sleep 90
 node scripts/e2e.mjs

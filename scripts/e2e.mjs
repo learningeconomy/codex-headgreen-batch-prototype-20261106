@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+const files = ['features/alpha.txt', 'features/beta.txt', 'features/gamma.txt'];
+const values = files.map(f => fs.readFileSync(f, 'utf8').trim());
+if (values.join(',') !== 'alpha,beta,gamma') throw new Error('Wrong combined features');
+const path = '/tmp/headgreen-batch-proof.html';
+fs.writeFileSync(path, `<!doctype html><title>Batch</title><main>${values.join(' ')}</main>`);
+const result = execFileSync('google-chrome', ['--headless', '--no-sandbox', '--disable-gpu', '--dump-dom', `file://${path}`], {encoding:'utf8'});
+if (!result.includes('<main>alpha beta gamma</main>')) throw new Error('Browser did not render combined features');
+console.log('BATCH_E2E_PASSED: browser rendered all three synthetic changes');

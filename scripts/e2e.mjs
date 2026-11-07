@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+if (fs.existsSync('features/fail.txt')) throw new Error('INTENTIONAL_BATCH_FAILURE');
 const files = ['features/alpha.txt', 'features/beta.txt', 'features/gamma.txt'];
 const values = files.map(f => fs.readFileSync(f, 'utf8').trim());
 if (values.join(',') !== 'alpha,beta,gamma') throw new Error('Wrong combined features');

@@ -38,12 +38,14 @@ export function inspectSnapshot(snapshot, { buildLimit, mergeLimit }) {
         const head = e.head.toLowerCase(), base = e.base.toLowerCase();
         if (seenHeads.has(head)) return unknown('duplicate_head');
         seenHeads.add(head);
-        // Queue transitions and failure / locking invalidate election. Do not infer
-        // a new chain from a partially built or reordered snapshot.
+        // Queue transitions and locking invalidate election. HEADGREEN permits an
+        // independently failed prefix if the complete combined candidate passes
+        // every required check; preserve its exact SHA in the chain. Do not infer
+        // a chain from a partially built or reordered snapshot.
         if (incomplete) return unknown('built_after_unbuilt');
         if (i > 0 && base !== priorHead) return unknown('inconsistent_chain');
         priorHead = head;
-        if (!['AWAITING_CHECKS', 'MERGEABLE'].includes(e.state)) return unknown('unstable_state');
+        if (!['AWAITING_CHECKS', 'MERGEABLE', 'UNMERGEABLE'].includes(e.state)) return unknown('unstable_state');
         // A solo entry splits a group. The event after a split must wait for the
         // first group's merge and rebuilt candidate; we cannot assert membership.
         if (i > 0 && e.solo) groupClosed = true;
@@ -99,5 +101,13 @@ export function decide({ snapshot, eventSha, nowMs, startedAtMs, stableSinceMs, 
 export function revalidate({ snapshot, eventSha, electedSignature, config }) {
     if (!sha(eventSha) || typeof electedSignature !== 'string') return false;
     const view = inspectSnapshot(snapshot, config);
-    return view.kind === 'candidates' && view.head === eventSha.toLowerCase() && view.signature === electedSignature;
+    if (view.kind !== 'candidates') return false;
+    let elected;
+    try { elected = JSON.parse(electedSignature); } catch { return false; }
+    if (!Array.isArray(elected) || elected.length === 0 || elected.length > view.buildable.length ||
+        elected.at(-1)?.head !== eventSha.toLowerCase()) return false;
+    // If later entries arrived while this candidate was tested, it is still a
+    // valid tested prefix ONLY when every elected entry, parent SHA, order, PR,
+    // and solo boundary is unchanged. Never borrow a success for a new SHA.
+    return JSON.stringify(view.buildable.slice(0, elected.length)) === electedSignature;
 }

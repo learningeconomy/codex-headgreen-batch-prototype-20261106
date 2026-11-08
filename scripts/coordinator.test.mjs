@@ -24,6 +24,34 @@ test('empty queue can be transient; marks stale only at deadline', () => { asser
 test('incomplete page, invalid positions, duplicate PRs and malformed SHA fail closed', () => { const a=entries(2); a[1].position=3; assert.equal(inspectSnapshot(snap(a),cfg).reason,'invalid_entry'); const b=entries(2); b[1].pr=1; assert.equal(inspectSnapshot(snap(b),cfg).reason,'duplicate_pr'); const c=entries(2); c[1].head='oops'; assert.equal(inspectSnapshot(snap(c),cfg).reason,'invalid_candidate_sha'); assert.equal(inspectSnapshot({nodes:entries(1),hasNextPage:true},cfg).reason,'incomplete_snapshot'); });
 test('inconsistent parent chain and unbuilt hole are rejected', () => { const a=entries(2); a[1].base=s(20); assert.equal(inspectSnapshot(snap(a),cfg).reason,'inconsistent_chain'); const b=entries(3); b[1]={...b[1],head:null,base:null,state:'QUEUED'}; assert.equal(inspectSnapshot(snap(b),cfg).reason,'buildable_candidate_not_ready'); });
 test('unknown or invalid configuration is an error and never a pass', () => { assert.equal(call(entries(1),1,{config:{...cfg,buildLimit:null}}).action,'error'); assert.equal(call(entries(1),1,{eventSha:'bad'}).action,'error'); });
-test('unstable locking or failure state does not elect', () => { const q=entries(2); q[0].state='UNMERGEABLE'; assert.equal(inspectSnapshot(snap(q),cfg).reason,'unstable_state'); });
+test('locked state remains unstable; failed prefixes do not prevent head election', () => { const q=entries(2); q[0].state='UNMERGEABLE'; assert.equal(stabilize(q,2).action,'run'); q[0].state='LOCKED'; assert.equal(inspectSnapshot(snap(q),cfg).reason,'unstable_state'); });
 test('unbuilt candidate within window waits rather than electing prefix', () => { const q=entries(2); q[1]={...q[1],head:null,base:null,state:'QUEUED'}; assert.equal(inspectSnapshot(snap(q),cfg).reason,'buildable_candidate_not_ready'); assert.equal(stabilize(q,1).action,'wait'); });
 test('changed snapshot at deadline falls back instead of electing without debounce', () => { assert.equal(call(entries(1),1,{nowMs:100,priorSignature:'other',stableSinceMs:0}).reason,'debounce_deadline'); });
+
+
+test('tested head remains valid when later candidate is appended', () => {
+  const before=entries(2); const result=stabilize(before,2); const after=entries(3);
+  assert.equal(revalidate({snapshot:snap(after),eventSha:s(2),electedSignature:result.signature,config:cfg}),true);
+});
+test('later head may be elected despite earlier failed prefix under HEADGREEN', () => {
+  const q=entries(3); q[1].state='UNMERGEABLE'; const result=stabilize(q,3);
+  assert.equal(result.action,'run');
+  assert.equal(revalidate({snapshot:snap(q),eventSha:s(3),electedSignature:result.signature,config:cfg}),true);
+});
+test('revalidate rejects removal and rebasing, even if a later PR is present', () => {
+  const q=entries(2); const result=stabilize(q,2);
+  const rebased=entries(3); rebased[0].pr=55;
+  assert.equal(revalidate({snapshot:snap(rebased),eventSha:s(2),electedSignature:result.signature,config:cfg}),false);
+  const removed=[{...entries(3)[1],position:1,base:s(0)}, {...entries(3)[2],position:2}];
+  assert.equal(revalidate({snapshot:snap(removed),eventSha:s(2),electedSignature:result.signature,config:cfg}),false);
+});
+test('revalidate never transfers success to appended or different SHA', () => {
+  const result=stabilize(entries(2),2); const q=entries(3);
+  assert.equal(revalidate({snapshot:snap(q),eventSha:s(3),electedSignature:result.signature,config:cfg}),false);
+  assert.equal(revalidate({snapshot:snap(q),eventSha:s(2),electedSignature:'invalid',config:cfg}),false);
+  assert.equal(revalidate({snapshot:snap(q),eventSha:s(2),electedSignature:'[]',config:cfg}),false);
+});
+test('a later candidate losing its check does not invalidate tested prefix', () => {
+  const result=stabilize(entries(2),2); const q=entries(3); q[2].state='UNMERGEABLE';
+  assert.equal(revalidate({snapshot:snap(q),eventSha:s(2),electedSignature:result.signature,config:cfg}),true);
+});

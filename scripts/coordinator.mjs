@@ -98,16 +98,29 @@ export function decide({ snapshot, eventSha, nowMs, startedAtMs, stableSinceMs, 
 }
 
 /** Re-read immediately before beginning and before completing the head check. */
-export function revalidate({ snapshot, eventSha, electedSignature, config }) {
-    if (!sha(eventSha) || typeof electedSignature !== 'string') return false;
+export function revalidate({ snapshot, eventSha, electedSignature, config, verifiedMerged = new Set() }) {
+    if (!sha(eventSha) || typeof electedSignature !== 'string' || !(verifiedMerged instanceof Set)) return false;
     const view = inspectSnapshot(snapshot, config);
     if (view.kind !== 'candidates') return false;
     let elected;
     try { elected = JSON.parse(electedSignature); } catch { return false; }
-    if (!Array.isArray(elected) || elected.length === 0 || elected.length > view.buildable.length ||
-        elected.at(-1)?.head !== eventSha.toLowerCase()) return false;
-    // If later entries arrived while this candidate was tested, it is still a
-    // valid tested prefix ONLY when every elected entry, parent SHA, order, PR,
-    // and solo boundary is unchanged. Never borrow a success for a new SHA.
-    return JSON.stringify(view.buildable.slice(0, elected.length)) === electedSignature;
+    if (!Array.isArray(elected) || elected.length === 0 || elected.length > 100 ||
+        elected.at(-1)?.head !== eventSha.toLowerCase() ||
+        elected.some((e,i) => !e || e.position !== i + 1 || !Number.isInteger(e.pr) || e.pr < 1 ||
+            !sha(e.head) || !sha(e.base) || typeof e.solo !== 'boolean')) return false;
+    // Entries can vanish from the front after they really merge, shifting
+    // positions while GitHub keeps this *exact* merge-group commit. Only allow
+    // that if each missing PR was independently confirmed merged. Removal of
+    // an unmerged PR is not equivalent and must fail closed.
+    for (let offset=0; offset < elected.length; offset++) {
+        const remaining = elected.slice(offset);
+        if (remaining.length > view.buildable.length ||
+            elected.slice(0, offset).some(e => !verifiedMerged.has(e.pr))) continue;
+        const match = remaining.every((old,i) => {
+            const cur = view.buildable[i];
+            return cur.pr === old.pr && cur.head === old.head && cur.base === old.base && cur.solo === old.solo;
+        });
+        if (match) return true;
+    }
+    return false;
 }

@@ -105,7 +105,21 @@ export async function main(env = process.env, args = process.argv.slice(2)) {
     if (args[0] === '--revalidate') {
         if (!env.ELECTED_SIGNATURE_BASE64) throw new Error('missing election signature');
         const signature = Buffer.from(env.ELECTED_SIGNATURE_BASE64, 'base64').toString('utf8');
-        if (!revalidate({snapshot:fetchQueue(ctx),eventSha:ctx.eventSha,electedSignature:signature,config:ctx.config}))
+        const snapshot = fetchQueue(ctx);
+        const verifiedMerged = new Set();
+        // Only missing PRs can represent shifted-away predecessors. A failed or
+        // ambiguous lookup is not a merged proof and makes revalidation fail.
+        try {
+            const elected = JSON.parse(signature);
+            if (Array.isArray(elected) && elected.length <= 100 && Array.isArray(snapshot?.nodes)) {
+                const currentPrs = new Set(snapshot.nodes.map(node => node?.pr));
+                for (const member of elected.slice(0,-1)) {
+                    if (Number.isInteger(member?.pr) && member.pr > 0 && !currentPrs.has(member.pr) && fetchMerged(ctx, member.pr))
+                        verifiedMerged.add(member.pr);
+                }
+            }
+        } catch { /* Pure revalidation will reject malformed input. */ }
+        if (!revalidate({snapshot,eventSha:ctx.eventSha,electedSignature:signature,config:ctx.config,verifiedMerged}))
             throw new Error('elected membership no longer current');
         console.log('Election membership remains current');
         return;

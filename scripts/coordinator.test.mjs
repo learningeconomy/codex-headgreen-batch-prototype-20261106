@@ -55,3 +55,30 @@ test('a later candidate losing its check does not invalidate tested prefix', () 
   const result=stabilize(entries(2),2); const q=entries(3); q[2].state='UNMERGEABLE';
   assert.equal(revalidate({snapshot:snap(q),eventSha:s(2),electedSignature:result.signature,config:cfg}),true);
 });
+
+test('same tested head survives earlier PRs merging and shifting position', () => {
+  const original=entries(3), result=stabilize(original,3);
+  const shifted={...original[2],position:1};
+  assert.equal(revalidate({snapshot:snap([shifted]),eventSha:s(3),electedSignature:result.signature,config:cfg,verifiedMerged:new Set([1,2])}),true);
+  assert.equal(revalidate({snapshot:snap([shifted]),eventSha:s(3),electedSignature:result.signature,config:cfg,verifiedMerged:new Set([1])}),false);
+  assert.equal(revalidate({snapshot:snap([shifted]),eventSha:s(3),electedSignature:result.signature,config:cfg}),false);
+});
+test('a single merged predecessor may disappear and new PRs may append', () => {
+  const original=entries(3), result=stabilize(original.slice(0,2),2);
+  const shifted={...original[1],position:1};
+  const appended={...original[2],position:2};
+  assert.equal(revalidate({snapshot:snap([shifted,appended]),eventSha:s(2),electedSignature:result.signature,config:cfg,verifiedMerged:new Set([1])}),true);
+});
+test('missing middle PR or reordered membership is never treated as merged prefix', () => {
+  const q=entries(3), result=stabilize(q,3);
+  const missingMiddle=[q[0],{...q[2],position:2,base:q[0].head}];
+  assert.equal(revalidate({snapshot:snap(missingMiddle),eventSha:s(3),electedSignature:result.signature,config:cfg,verifiedMerged:new Set([2])}),false);
+  const changedPr=[{...q[2],position:1,pr:99}];
+  assert.equal(revalidate({snapshot:snap(changedPr),eventSha:s(3),electedSignature:result.signature,config:cfg,verifiedMerged:new Set([1,2])}),false);
+});
+test('same PR with changed head, base or solo is not a tested candidate', () => {
+  const q=entries(3), result=stabilize(q,3);
+  for (const changed of [{head:s(99)},{base:s(99)},{solo:true}]) {
+    assert.equal(revalidate({snapshot:snap([{...q[2],position:1,...changed}]),eventSha:s(3),electedSignature:result.signature,config:cfg,verifiedMerged:new Set([1,2])}),false);
+  }
+});

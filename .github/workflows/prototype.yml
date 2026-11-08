@@ -72,6 +72,8 @@ jobs:
           DEADLINE_MS: '180000'
           POLL_MS: '5000'
         run: |
-          test "$SELECT_RESULT" = success && test "$BROWSER_RESULT" = success && test "$SERVICE_RESULT" = success
+          test "$SELECT_RESULT" = success
+          test "$BROWSER_RESULT" = success
+          test "$SERVICE_RESULT" = success
           if [[ "$ELECTION" == run ]]; then node scripts/adapter.mjs --revalidate; fi
           echo "E2E gate passed for $GITHUB_SHA ($ELECTION)"

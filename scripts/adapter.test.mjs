@@ -14,3 +14,23 @@ test('prefix keeps polling until promotion after removal', async () => { const c
 test('prefix timeout falls back to fresh test, never false success', async () => { const ctx=context({...env,GITHUB_SHA:s(1)},{merge_group:{...event.merge_group,head_sha:s(1)}}); const result=await simulate(ctx,()=>mk(2)); assert.equal(result.action,'fallback'); assert.equal(result.reason,'prefix_deadline'); });
 test('API outage falls back to fresh test at deadline', async () => { const result=await simulate(context(env,event),()=>null); assert.equal(result.action,'fallback'); });
 test('removed event remains stale after deadline and exits with error', async () => { await assert.rejects(simulate(context(env,event),()=>mk(1)),/stale/); });
+
+test('CLI executes through a symlinked script path and writes election outputs', async () => {
+  const {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync} = await import('node:fs');
+  const {tmpdir} = await import('node:os');
+  const {join} = await import('node:path');
+  const {execFileSync} = await import('node:child_process');
+  const d=mkdtempSync(join(tmpdir(),'headgreen-cli-'));
+  try {
+    mkdirSync(join(d,'bin'));
+    const result={data:{repository:{mergeQueue:{entries:{pageInfo:{hasNextPage:false},nodes:[1,2].map(i=>({position:i,state:'AWAITING_CHECKS',solo:false,headCommit:{oid:s(i)},baseCommit:{oid:s(i-1)},pullRequest:{number:i}}))}}}}};
+    writeFileSync(join(d,'api.json'),JSON.stringify(result));
+    writeFileSync(join(d,'bin','gh'),`#!/bin/sh\ncat '${join(d,'api.json')}'\n`,{mode:0o755});
+    writeFileSync(join(d,'event.json'),JSON.stringify(event));
+    // A symlink reproduces macOS /tmp versus /private/tmp script path resolution.
+    symlinkSync(new URL('./adapter.mjs',import.meta.url).pathname,join(d,'linked-adapter.mjs'));
+    const output=join(d,'out');
+    execFileSync(process.execPath,[join(d,'linked-adapter.mjs')],{env:{...process.env,...env,GITHUB_EVENT_PATH:join(d,'event.json'),GITHUB_OUTPUT:output,DEADLINE_MS:'5000',DEBOUNCE_MS:'5',POLL_MS:'5',PATH:`${join(d,'bin')}:${process.env.PATH}`},timeout:10000});
+    assert.match(readFileSync(output,'utf8'),/run_test=true\nelection=run\n/);
+  } finally { rmSync(d,{recursive:true,force:true}); }
+});

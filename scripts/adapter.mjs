@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { decide, revalidate } from './coordinator.mjs';
 
@@ -85,6 +85,6 @@ export async function main(env = process.env, args = process.argv.slice(2)) {
     appendFileSync(ctx.output, `run_test=true\nelection=${result.action}\nevent_sha=${ctx.eventSha}\nsignature_base64=${encoded}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
     main().catch(err => { console.error(`Coordinator failed: ${err.message}`); process.exitCode=1; });
 }

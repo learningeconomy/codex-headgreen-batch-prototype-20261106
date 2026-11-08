@@ -1,4 +1,4 @@
-name: Batch proof prototype
+name: Batch coordinator prototype
 on:
   pull_request:
   merge_group:
@@ -11,21 +11,67 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: test -f README.md
-  E2E:
+      - run: node --test scripts/coordinator.test.mjs scripts/adapter.test.mjs
+  select:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
+    outputs:
+      election: ${{ steps.select.outputs.election }}
+      event_sha: ${{ steps.select.outputs.event_sha }}
+      signature_base64: ${{ steps.select.outputs.signature_base64 }}
     steps:
       - uses: actions/checkout@v4
-      - name: Observe queue with production candidate scripts
-        if: ${{ github.event_name == 'merge_group' }}
+      - id: select
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/observe-queue-batch.mjs
-      - name: Verify combined candidate
+          BUILD_LIMIT: '3'
+          MERGE_LIMIT: '3'
+          DEBOUNCE_MS: '20000'
+          DEADLINE_MS: '180000'
+          POLL_MS: '5000'
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            echo 'election=pr' >> "$GITHUB_OUTPUT"
+            echo "event_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            node scripts/adapter.mjs
+          fi
+  browser:
+    needs: select
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/e2e.mjs browser
+  service:
+    needs: select
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/e2e.mjs shard-${{ matrix.shard }}
+  E2E:
+    if: ${{ always() }}
+    needs: [select, browser, service]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify suite and current candidate
         env:
+          SELECT_RESULT: ${{ needs.select.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          SERVICE_RESULT: ${{ needs.service.result }}
+          ELECTION: ${{ needs.select.outputs.election }}
+          ELECTED_SIGNATURE_BASE64: ${{ needs.select.outputs.signature_base64 }}
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-          REF: ${{ github.ref }}
-        run: bash scripts/e2e.sh
+          BUILD_LIMIT: '3'
+          MERGE_LIMIT: '3'
+          DEBOUNCE_MS: '20000'
+          DEADLINE_MS: '180000'
+          POLL_MS: '5000'
+        run: |
+          test "$SELECT_RESULT" = success && test "$BROWSER_RESULT" = success && test "$SERVICE_RESULT" = success
+          if [[ "$ELECTION" == run ]]; then node scripts/adapter.mjs --revalidate; fi
+          echo "E2E gate passed for $GITHUB_SHA ($ELECTION)"

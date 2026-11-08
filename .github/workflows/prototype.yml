@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: node --test scripts/coordinator.test.mjs scripts/adapter.test.mjs
+      - run: node --test scripts/coordinator.test.mjs scripts/adapter.test.mjs scripts/gate.test.mjs
   select:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -64,6 +64,7 @@ jobs:
           BROWSER_RESULT: ${{ needs.browser.result }}
           SERVICE_RESULT: ${{ needs.service.result }}
           ELECTION: ${{ needs.select.outputs.election }}
+          EVENT_SHA: ${{ needs.select.outputs.event_sha }}
           ELECTED_SIGNATURE_BASE64: ${{ needs.select.outputs.signature_base64 }}
           GH_TOKEN: ${{ github.token }}
           BUILD_LIMIT: '3'
@@ -72,8 +73,4 @@ jobs:
           DEADLINE_MS: '180000'
           POLL_MS: '5000'
         run: |
-          test "$SELECT_RESULT" = success
-          test "$BROWSER_RESULT" = success
-          test "$SERVICE_RESULT" = success
-          if [[ "$ELECTION" == run ]]; then node scripts/adapter.mjs --revalidate; fi
-          echo "E2E gate passed for $GITHUB_SHA ($ELECTION)"
+          bash scripts/gate.sh

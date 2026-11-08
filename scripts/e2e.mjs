@@ -7,7 +7,7 @@ if (!['browser', 'shard-1', 'shard-2', 'shard-3'].includes(role)) throw new Erro
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 console.log(`SUITE_STARTED role=${role} sha=${sha}`);
 if (fs.existsSync('features/coordinator-slow.txt')) await sleep(45000);
-if (fs.existsSync('features/coordinator-fail.txt') && fs.readFileSync('features/coordinator-fail.txt', 'utf8').trim() === role) {
+if (process.env.GITHUB_EVENT_NAME === 'merge_group' && fs.existsSync('features/coordinator-fail.txt') && fs.readFileSync('features/coordinator-fail.txt', 'utf8').trim() === role) {
     throw new Error(`Intentional synthetic failure: ${role}`);
 }
 const members = fs.readdirSync('features').filter(name => name.startsWith('coord-')).sort();

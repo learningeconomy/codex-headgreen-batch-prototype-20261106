@@ -38,11 +38,11 @@ test('CLI executes through a symlinked script path and writes election outputs',
 
 test('only a matching, positively merged PR is accepted as irreversible evidence', () => {
  const ctx=context(env,event), reply=(n,merged)=>() => JSON.stringify({data:{repository:{pullRequest:{number:n,merged}}}});
- assert.equal(fetchMerged(ctx,2,reply(2,true)),true);
- assert.equal(fetchMerged(ctx,2,reply(2,false)),false);
- assert.equal(fetchMerged(ctx,2,reply(1,true)),false);
- assert.equal(fetchMerged(ctx,2,()=>JSON.stringify({errors:[{}],data:{repository:{pullRequest:{number:2,merged:true}}}})),false);
- assert.equal(fetchMerged(ctx,2,()=>{throw Error('unavailable')}),false);
+ assert.equal(fetchMerged(ctx,2,null,reply(2,true)),true);
+ assert.equal(fetchMerged(ctx,2,null,reply(2,false)),false);
+ assert.equal(fetchMerged(ctx,2,null,reply(1,true)),false);
+ assert.equal(fetchMerged(ctx,2,null,()=>JSON.stringify({errors:[{}],data:{repository:{pullRequest:{number:2,merged:true}}}})),false);
+ assert.equal(fetchMerged(ctx,2,null,()=>{throw Error('unavailable')}),false);
 });
 
 test('witnessed prefix exits promptly only after its PR is confirmed merged', async () => {
@@ -129,7 +129,7 @@ test('revalidate CLI checks merged predecessor evidence after queue positions sh
     const original=mk(3); const signature=inspectSnapshot(original,{buildLimit:3,mergeLimit:3}).signature;
     const remaining={position:1,state:'AWAITING_CHECKS',solo:false,headCommit:{oid:s(3)},baseCommit:{oid:s(2)},pullRequest:{number:3}};
     writeFileSync(join(d,'queue.json'),JSON.stringify({data:{repository:{mergeQueue:{entries:{pageInfo:{hasNextPage:false},nodes:[remaining]}}}}}));
-    for (const pr of [1,2]) writeFileSync(join(d,`pr${pr}.json`),JSON.stringify({data:{repository:{pullRequest:{number:pr,merged:true}}}}));
+    for (const pr of [1,2]) writeFileSync(join(d,`pr${pr}.json`),JSON.stringify({data:{repository:{pullRequest:{number:pr,merged:true,mergeCommit:{oid:s(pr)}}}}}));
     writeFileSync(join(d,'bin','gh'),`#!/bin/sh\ncase "$*" in *CandidatePR*number=1*) cat '${join(d,'pr1.json')}';; *CandidatePR*number=2*) cat '${join(d,'pr2.json')}';; *) cat '${join(d,'queue.json')}';; esac\n`,{mode:0o755});
     writeFileSync(join(d,'event.json'),JSON.stringify({merge_group:{...event.merge_group,head_sha:s(3)}}));
     const run=() => spawnSync(process.execPath,[new URL('./adapter.mjs',import.meta.url).pathname,'--revalidate'],{env:{...process.env,...env,GITHUB_SHA:s(3),GITHUB_EVENT_PATH:join(d,'event.json'),GITHUB_OUTPUT:join(d,'out'),ELECTED_SIGNATURE_BASE64:Buffer.from(signature).toString('base64'),PATH:`${join(d,'bin')}:${process.env.PATH}`},encoding:'utf8',timeout:10000});
@@ -137,4 +137,11 @@ test('revalidate CLI checks merged predecessor evidence after queue positions sh
     writeFileSync(join(d,'pr2.json'),JSON.stringify({data:{repository:{pullRequest:{number:2,merged:false}}}}));
     assert.equal(run().status,1);
   } finally { rmSync(d,{recursive:true,force:true}); }
+});
+
+test('shifted candidate requires each merged predecessor commit to equal its tested queue SHA', () => {
+ const ctx=context(env,event), reply=(oid)=>() => JSON.stringify({data:{repository:{pullRequest:{number:2,merged:true,mergeCommit:{oid}}}}});
+ assert.equal(fetchMerged(ctx,2,s(2),reply(s(2))),true);
+ assert.equal(fetchMerged(ctx,2,s(2),reply(s(9))),false);
+ assert.equal(fetchMerged(ctx,2,s(2),reply(null)),false);
 });

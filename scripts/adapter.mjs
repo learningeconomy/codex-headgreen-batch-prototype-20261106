@@ -12,7 +12,7 @@ export const QUERY = `query Batch($owner:String!,$name:String!,$branch:String!) 
 }`;
 
 export const MERGED_QUERY = `query CandidatePR($owner:String!,$name:String!,$number:Int!) {
-  repository(owner:$owner,name:$name) { pullRequest(number:$number) { number merged } }
+  repository(owner:$owner,name:$name) { pullRequest(number:$number) { number merged mergeCommit { oid } } }
 }`;
 
 const isSha = v => typeof v === 'string' && /^[a-f\d]{40}$/i.test(v);
@@ -53,13 +53,14 @@ export function fetchQueue(ctx, exec = execFileSync) {
 }
 
 /** A merged PR is irreversible proof its previously observed candidate is obsolete. */
-export function fetchMerged(ctx, number, exec = execFileSync) {
+export function fetchMerged(ctx, number, expectedHead = null, exec = execFileSync) {
     try {
         const raw = exec('gh', ['api','graphql','-f',`query=${MERGED_QUERY}`,'-f',`owner=${ctx.owner}`,'-f',`name=${ctx.name}`,'-F',`number=${number}`],
             {encoding:'utf8',timeout:8000,stdio:['ignore','pipe','pipe']});
         const data = JSON.parse(raw);
         const pr = data?.data?.repository?.pullRequest;
-        return !data?.errors?.length && pr?.number === number && pr?.merged === true;
+        return !data?.errors?.length && pr?.number === number && pr?.merged === true &&
+            (expectedHead === null || (isSha(expectedHead) && pr?.mergeCommit?.oid?.toLowerCase() === expectedHead.toLowerCase()));
     } catch { return false; }
 }
 
@@ -114,7 +115,7 @@ export async function main(env = process.env, args = process.argv.slice(2)) {
             if (Array.isArray(elected) && elected.length <= 100 && Array.isArray(snapshot?.nodes)) {
                 const currentPrs = new Set(snapshot.nodes.map(node => node?.pr));
                 for (const member of elected.slice(0,-1)) {
-                    if (Number.isInteger(member?.pr) && member.pr > 0 && !currentPrs.has(member.pr) && fetchMerged(ctx, member.pr))
+                    if (Number.isInteger(member?.pr) && member.pr > 0 && !currentPrs.has(member.pr) && fetchMerged(ctx, member.pr, member.head))
                         verifiedMerged.add(member.pr);
                 }
             }

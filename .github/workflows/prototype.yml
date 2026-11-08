@@ -12,6 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: node --test scripts/coordinator.test.mjs scripts/adapter.test.mjs scripts/gate.test.mjs
+      - name: Force prefix-only Test failure
+        if: ${{ github.event_name == 'merge_group' }}
+        run: |
+          if [[ -f features/prefix-test-fail.txt && ! -f features/prefix-test-recover.txt ]]; then
+            echo 'Intentional prefix-only synthetic Test failure' >&2
+            exit 1
+          fi
   select:
     runs-on: ubuntu-latest
     timeout-minutes: 5

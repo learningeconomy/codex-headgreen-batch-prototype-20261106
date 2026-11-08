@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { decide, revalidate } from './coordinator.mjs';
+import { decide, inspectSnapshot, revalidate } from './coordinator.mjs';
 
 export const QUERY = `query Batch($owner:String!,$name:String!,$branch:String!) {
   repository(owner:$owner,name:$name) { mergeQueue(branch:$branch) {
@@ -9,6 +9,10 @@ export const QUERY = `query Batch($owner:String!,$name:String!,$branch:String!) 
       position state solo headCommit { oid } baseCommit { oid } pullRequest { number }
     } }
   } }
+}`;
+
+export const MERGED_QUERY = `query CandidatePR($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) { pullRequest(number:$number) { number merged } }
 }`;
 
 const isSha = v => typeof v === 'string' && /^[a-f\d]{40}$/i.test(v);
@@ -48,13 +52,42 @@ export function fetchQueue(ctx, exec = execFileSync) {
     } catch { return null; }
 }
 
+/** A merged PR is irreversible proof its previously observed candidate is obsolete. */
+export function fetchMerged(ctx, number, exec = execFileSync) {
+    try {
+        const raw = exec('gh', ['api','graphql','-f',`query=${MERGED_QUERY}`,'-f',`owner=${ctx.owner}`,'-f',`name=${ctx.name}`,'-F',`number=${number}`],
+            {encoding:'utf8',timeout:8000,stdio:['ignore','pipe','pipe']});
+        const data = JSON.parse(raw);
+        const pr = data?.data?.repository?.pullRequest;
+        return !data?.errors?.length && pr?.number === number && pr?.merged === true;
+    } catch { return false; }
+}
+
 /** Poll one event until elected or a bounded fresh-test fallback; never returns a prefix pass. */
-export async function runCoordinator(ctx, {fetch = fetchQueue, clock = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve,ms)), log = () => {}} = {}) {
+export async function runCoordinator(ctx, {fetch = fetchQueue, merged = fetchMerged, clock = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve,ms)), log = () => {}} = {}) {
     const startedAtMs = clock();
-    let priorSignature = null, stableSinceMs = null;
+    let priorSignature = null, stableSinceMs = null, observedPr = null;
     for (;;) {
         const snapshot = await fetch(ctx);
         const nowMs = clock();
+        const view = inspectSnapshot(snapshot, ctx.config);
+        // Record identity only from a validated, complete snapshot, never from
+        // ref-name guesses or malformed data. Once a PR is merged it cannot be
+        // reopened, so an absent witnessed candidate plus a fresh merged=true
+        // result proves this run no longer needs to wait. Failure or ambiguity
+        // in either read simply retains normal wait/fallback behavior.
+        if (view.kind === 'candidates') {
+            const current = snapshot.nodes.find(entry => entry.head?.toLowerCase() === ctx.eventSha);
+            if (current && observedPr !== null && observedPr !== current.pr)
+                throw new Error('candidate SHA maps to conflicting pull requests');
+            if (current) observedPr = current.pr;
+        }
+        if (observedPr !== null && (view.kind === 'empty' || view.kind === 'candidates') &&
+            !(snapshot.nodes || []).some(entry => entry.head?.toLowerCase() === ctx.eventSha) &&
+            await merged(ctx, observedPr)) {
+            log('obsolete', 'witnessed_pr_merged');
+            return {action:'obsolete', reason:'witnessed_pr_merged', pr:observedPr};
+        }
         const result = decide({ snapshot, eventSha:ctx.eventSha, nowMs, startedAtMs, stableSinceMs, priorSignature, config:ctx.config });
         log(result.action, result.reason);
         if (result.action === 'run' || result.action === 'fallback') return result;
@@ -79,6 +112,7 @@ export async function main(env = process.env, args = process.argv.slice(2)) {
     }
     if (args.length) throw new Error('unknown argument');
     const result = await runCoordinator(ctx,{log:(action,reason) => console.log(`Coordinator: ${action}: ${reason}`)});
+    if (result.action === 'obsolete') throw new Error('witnessed candidate PR was merged; this E2E attempt is obsolete');
     const encoded = Buffer.from(result.signature || '', 'utf8').toString('base64');
     // There is intentionally no run_test=false path. A stale or failed adapter
     // exits nonzero; a waiting prefix continues polling and can fall back to E2E.

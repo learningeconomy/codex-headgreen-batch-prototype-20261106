@@ -34,7 +34,7 @@ jobs:
             echo 'election=pr' >> "$GITHUB_OUTPUT"
             echo "event_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           else
-            GH_TOKEN=synthetic-invalid node scripts/adapter.mjs
+            node scripts/adapter.mjs
           fi
   browser:
     needs: select
